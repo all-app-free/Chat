@@ -8,7 +8,6 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, updateDoc, doc, setDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
         import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-        import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyAW9wTUspeZIfVDOrmE11GHsWWZACdaghc",
@@ -23,17 +22,19 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
         const auth = getAuth(app);
-        const storage = getStorage(app);
 
-        let user = null;
+        let currentUser = null;
 
-        onAuthStateChanged(auth, (u) => {
-            user = u;
-            if (u) {
+        onAuthStateChanged(auth, (user) => {
+            currentUser = user;
+            if (user) {
                 document.getElementById('auth-ui').style.display = 'none';
                 document.getElementById('chat-ui').style.display = 'flex';
-                // Uložit uživatele do seznamu online
-                setDoc(doc(db, "users", u.uid), { name: u.displayName || u.phoneNumber, photo: u.photoURL, lastSeen: serverTimestamp() });
+                // Registrace uživatele pro "Typing" funkci a seznam
+                setDoc(doc(db, "users", user.uid), { 
+                    name: user.displayName || user.phoneNumber, 
+                    typing: false 
+                }, { merge: true });
                 loadMessages();
             } else {
                 document.getElementById('auth-ui').style.display = 'flex';
@@ -41,18 +42,18 @@
             }
         });
 
-        // TÉMA
+        // --- FUNKCE ---
         window.toggleTheme = () => document.body.classList.toggle('dark');
+        window.login = () => signInWithPopup(auth, new GoogleAuthProvider());
+        window.logout = () => signOut(auth);
 
-        // ODESÍLÁNÍ TEXTU A FOTEK
-        window.sendMsg = async (imageUrl = null) => {
+        window.sendMsg = async () => {
             const input = document.getElementById('msgInput');
-            if (user && (input.value.trim() !== "" || imageUrl)) {
+            if (currentUser && input.value.trim() !== "") {
                 await addDoc(collection(db, "messages"), {
                     text: input.value,
-                    image: imageUrl,
-                    uid: user.uid,
-                    name: user.displayName || user.phoneNumber,
+                    uid: currentUser.uid,
+                    name: currentUser.displayName || currentUser.phoneNumber,
                     time: serverTimestamp(),
                     read: false
                 });
@@ -61,21 +62,17 @@
             }
         };
 
-        window.uploadFile = async (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-            const sRef = ref(storage, `chat/${Date.now()}_${file.name}`);
-            await uploadBytes(sRef, file);
-            const url = await getDownloadURL(sRef);
-            sendMsg(url);
+        // Indikátor psaní
+        let typingTimeout;
+        window.handleTyping = () => {
+            if (!currentUser) return;
+            updateDoc(doc(db, "users", currentUser.uid), { typing: true });
+            clearTimeout(typingTimeout);
+            typingTimeout = setTimeout(stopTyping, 3000);
         };
-
-        // INDIKÁTOR PSANÍ
-        window.startTyping = () => {
-            updateDoc(doc(db, "users", user.uid), { typing: true });
-            setTimeout(stopTyping, 3000);
+        const stopTyping = () => {
+            if (currentUser) updateDoc(doc(db, "users", currentUser.uid), { typing: false });
         };
-        const stopTyping = () => updateDoc(doc(db, "users", user.uid), { typing: false });
 
         function loadMessages() {
             const q = query(collection(db, "messages"), orderBy("time", "asc"));
@@ -84,73 +81,96 @@
                 box.innerHTML = "";
                 snap.forEach(d => {
                     const m = d.data();
-                    const isMe = m.uid === user.uid;
-                    if (!isMe && !m.read) updateDoc(doc(db, "messages", d.id), { read: true });
+                    const isMe = m.uid === currentUser?.uid;
                     
-                    const t = m.time ? new Date(m.time.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "...";
+                    // Označit jako přečtené, pokud zprávu vidí někdo jiný
+                    if (!isMe && !m.read) updateDoc(doc(db, "messages", d.id), { read: true });
+
+                    const time = m.time ? new Date(m.time.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "";
                     
                     box.innerHTML += `
                         <div class="msg ${isMe ? 'me' : 'others'}">
-                            <div class="name">${m.name} <span style="font-size:9px;opacity:0.6">${t}</span></div>
-                            ${m.image ? `<img src="${m.image}" style="max-width:200px;border-radius:10px;display:block;margin-bottom:5px;">` : ''}
-                            <div>${m.text}</div>
+                            <div class="msg-info">${m.name} • ${time}</div>
+                            <div class="msg-text">${m.text}</div>
                             ${isMe ? `<div class="status">${m.read ? '✔✔' : '✔'}</div>` : ''}
                         </div>`;
                 });
                 box.scrollTop = box.scrollHeight;
             });
 
-            // Sledování kdo píše
+            // Sledování, kdo píše
             onSnapshot(collection(db, "users"), (snap) => {
-                const typingNames = [];
-                snap.forEach(d => { if(d.data().typing && d.id !== user.uid) typingNames.push(d.data().name); });
-                document.getElementById('typing').innerText = typingNames.length > 0 ? typingNames.join(', ') + " píše..." : "";
+                const typingList = [];
+                snap.forEach(d => {
+                    if (d.data().typing && d.id !== currentUser?.uid) typingList.push(d.data().name);
+                });
+                document.getElementById('typing-status').innerText = typingList.length > 0 ? typingList.join(', ') + " píše..." : "";
             });
         }
-
-        window.login = () => signInWithPopup(auth, new GoogleAuthProvider());
-        window.logout = () => signOut(auth);
     </script>
     <style>
-        :root { --bg: #f0f2f5; --panel: #ffffff; --text: #050505; --accent: #0084ff; --msg-other: #e4e6eb; }
-        body.dark { --bg: #18191a; --panel: #242526; --text: #e4e6eb; --accent: #0078ff; --msg-other: #3a3b3c; }
-        * { box-sizing: border-box; }
-        body { margin: 0; background: var(--bg); color: var(--text); font-family: sans-serif; transition: 0.3s; }
-        #chat-ui { display: none; flex-direction: column; height: 100vh; max-width: 600px; margin: auto; background: var(--panel); box-shadow: 0 0 20px rgba(0,0,0,0.1); }
-        header { padding: 15px; background: var(--accent); color: white; display: flex; justify-content: space-between; align-items: center; }
-        #box { flex-grow: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px; }
-        .msg { max-width: 80%; padding: 10px 15px; border-radius: 18px; font-size: 15px; position: relative; }
+        :root { --bg: #f4f7f6; --panel: #ffffff; --text: #1c1e21; --accent: #0084ff; --msg-other: #e4e6eb; --shadow: rgba(0,0,0,0.1); }
+        body.dark { --bg: #101214; --panel: #1c1e21; --text: #e4e6eb; --accent: #0078ff; --msg-other: #3a3b3c; --shadow: rgba(0,0,0,0.3); }
+
+        * { box-sizing: border-box; transition: background 0.3s, color 0.3s; }
+        body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; height: 100vh; display: flex; flex-direction: column; }
+        
+        /* Login UI */
+        #auth-ui { flex-grow: 1; display: flex; justify-content: center; align-items: center; padding: 20px; }
+        .login-card { background: var(--panel); padding: 40px; border-radius: 24px; box-shadow: 0 10px 30px var(--shadow); text-align: center; width: 100%; max-width: 400px; }
+        .login-card h1 { margin-top: 0; color: var(--accent); }
+
+        /* Chat UI */
+        #chat-ui { display: none; flex-direction: column; height: 100vh; max-width: 600px; margin: auto; background: var(--panel); box-shadow: 0 0 40px var(--shadow); }
+        header { padding: 15px 20px; background: var(--accent); color: white; display: flex; justify-content: space-between; align-items: center; font-weight: 600; box-shadow: 0 2px 10px var(--shadow); }
+        
+        #box { flex-grow: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; scroll-behavior: smooth; }
+        
+        .msg { max-width: 80%; padding: 12px 16px; border-radius: 20px; position: relative; box-shadow: 0 1px 2px var(--shadow); }
         .me { align-self: flex-end; background: var(--accent); color: white; border-bottom-right-radius: 4px; }
         .others { align-self: flex-start; background: var(--msg-other); color: var(--text); border-bottom-left-radius: 4px; }
-        .name { font-size: 10px; font-weight: bold; margin-bottom: 3px; }
-        .status { font-size: 10px; text-align: right; }
-        .input-area { padding: 15px; border-top: 1px solid rgba(0,0,0,0.1); }
-        .controls { display: flex; gap: 10px; align-items: center; }
-        input[type="text"] { flex-grow: 1; padding: 12px; border-radius: 20px; border: 1px solid #ddd; background: var(--bg); color: var(--text); outline: none; }
-        #typing { font-size: 12px; color: var(--accent); height: 15px; margin-bottom: 5px; margin-left: 15px; }
-        #auth-ui { height: 100vh; display: flex; justify-content: center; align-items: center; }
-        .btn { border: none; background: var(--accent); color: white; padding: 10px 15px; border-radius: 20px; cursor: pointer; font-weight: bold; }
+        
+        .msg-info { font-size: 10px; margin-bottom: 4px; opacity: 0.8; font-weight: bold; }
+        .msg-text { font-size: 15px; line-height: 1.4; word-wrap: break-word; }
+        .status { font-size: 10px; text-align: right; margin-top: 4px; opacity: 0.9; }
+
+        #typing-status { height: 20px; padding: 0 20px; font-size: 12px; color: var(--accent); font-style: italic; }
+
+        .input-area { padding: 20px; display: flex; gap: 12px; align-items: center; border-top: 1px solid var(--msg-other); }
+        input[type="text"] { flex-grow: 1; padding: 14px 20px; border-radius: 25px; border: none; background: var(--bg); color: var(--text); outline: none; font-size: 15px; }
+        
+        .btn { border: none; background: var(--accent); color: white; padding: 12px 20px; border-radius: 25px; cursor: pointer; font-weight: bold; }
+        .btn-circle { width: 45px; height: 45px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+        .btn-logout { background: transparent; border: 1px solid white; font-size: 12px; padding: 6px 12px; }
     </style>
 </head>
 <body>
+
     <div id="auth-ui">
-        <button class="btn" onclick="login()">Vstoupit do Luvyx Chat</button>
-    </div>
-    <div id="chat-ui">
-        <header>
-            <button class="btn" onclick="toggleTheme()">☀️/🌙</button>
-            <strong>Luvyx Chat</strong>
-            <button class="btn" onclick="logout()">🚪</button>
-        </header>
-        <div id="box"></div>
-        <div id="typing"></div>
-        <div class="input-area">
-            <div class="controls">
-                <label class="btn">📷<input type="file" hidden accept="image/*" onchange="uploadFile(event)"></label>
-                <input type="text" id="msgInput" placeholder="Napiš zprávu..." onkeypress="startTyping(); if(event.key==='Enter') sendMsg()">
-                <button class="btn" onclick="sendMsg()">➤</button>
-            </div>
+        <div class="login-card">
+            <h1>Luvyx Chat</h1>
+            <p>Vstupte do soukromé zóny</p>
+            <button class="btn" style="width:100%" onclick="login()">Přihlásit se přes Google</button>
         </div>
     </div>
+
+    <div id="chat-ui">
+        <header>
+            <button class="btn btn-logout" onclick="toggleTheme()">Režim</button>
+            <span>Luvyx Chat</span>
+            <button class="btn btn-logout" onclick="logout()">Odhlásit</button>
+        </header>
+        
+        <div id="box"></div>
+        <div id="typing-status"></div>
+        
+        <div class="input-area">
+            <input type="text" id="msgInput" placeholder="Napiš zprávu..." 
+                   oninput="handleTyping()" 
+                   onkeypress="if(event.key==='Enter') sendMsg()">
+            <button class="btn btn-circle" onclick="sendMsg()">➤</button>
+        </div>
+    </div>
+
 </body>
 </html>
