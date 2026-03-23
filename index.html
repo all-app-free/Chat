@@ -26,14 +26,14 @@
         let currentUser = null;
         let activeChatId = null; 
         let unsubMessages = null;
+        let unsubUsers = null;
 
         onAuthStateChanged(auth, (user) => {
-            currentUser = user;
             if (user) {
+                currentUser = user;
                 document.getElementById('auth-ui').style.display = 'none';
                 document.getElementById('chat-ui').style.display = 'flex';
                 
-                // Načtení/Vytvoření profilu (pokud uživatel změnil jméno, zachováme ho)
                 const userRef = doc(db, "users", user.uid);
                 onSnapshot(userRef, (docSnap) => {
                     if (docSnap.exists()) {
@@ -47,15 +47,22 @@
 
                 loadAllUsers();
             } else {
+                // RESET PŘI ODHLÁŠENÍ
+                currentUser = null;
+                activeChatId = null;
+                if (unsubMessages) unsubMessages();
+                if (unsubUsers) unsubUsers();
                 document.getElementById('auth-ui').style.display = 'flex';
                 document.getElementById('chat-ui').style.display = 'none';
+                document.getElementById('box').innerHTML = ""; 
+                document.getElementById('chat-subtitle').innerText = "Vyberte kontakt v menu";
             }
         });
 
         const getChatId = (uid1, uid2) => [uid1, uid2].sort().join("_");
 
         function loadAllUsers() {
-            onSnapshot(collection(db, "users"), (snap) => {
+            unsubUsers = onSnapshot(collection(db, "users"), (snap) => {
                 const list = document.getElementById('user-list');
                 list.innerHTML = "";
                 snap.forEach(d => {
@@ -78,13 +85,13 @@
             const newName = document.getElementById('profile-name-input').value.trim();
             if (currentUser && newName !== "") {
                 await updateDoc(doc(db, "users", currentUser.uid), { name: newName });
-                alert("Přezdívka aktualizována!");
+                alert("Přezdívka uložena!");
             }
         };
 
         window.startChat = (targetUser) => {
             activeChatId = getChatId(currentUser.uid, targetUser.uid);
-            document.getElementById('chat-title').innerText = targetUser.name;
+            document.getElementById('chat-subtitle').innerText = "Chat s: " + targetUser.name;
             toggleMenu();
             loadMessages(activeChatId);
         };
@@ -92,8 +99,6 @@
         window.sendMsg = async () => {
             const input = document.getElementById('msgInput');
             if (currentUser && activeChatId && input.value.trim() !== "") {
-                const userDoc = await doc(db, "users", currentUser.uid);
-                // Pro soukromé zprávy posíláme jen text a ID, jméno si appka vytáhne z profilu
                 await addDoc(collection(db, "chats", activeChatId, "messages"), {
                     text: input.value,
                     sender: currentUser.uid,
@@ -105,13 +110,15 @@
 
         function loadMessages(chatId) {
             if (unsubMessages) unsubMessages();
+            const box = document.getElementById('box');
+            box.innerHTML = ""; 
+
             const q = query(collection(db, "chats", chatId, "messages"), orderBy("time", "asc"));
             unsubMessages = onSnapshot(q, (snap) => {
-                const box = document.getElementById('box');
-                box.innerHTML = "";
+                box.innerHTML = ""; 
                 snap.forEach(d => {
                     const m = d.data();
-                    const isMe = m.sender === currentUser.uid;
+                    const isMe = m.sender === currentUser?.uid;
                     const time = m.time ? new Date(m.time.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "";
                     box.innerHTML += `
                         <div class="msg ${isMe ? 'me' : 'others'}">
@@ -129,7 +136,7 @@
         };
 
         window.logout = () => {
-            toggleMenu(); // Zavře menu před odhlášením
+            if(document.getElementById('sidebar').classList.contains('open')) toggleMenu();
             signOut(auth);
         };
 
@@ -149,57 +156,61 @@
         #overlay.visible { display: block; }
 
         .profile-section { padding: 15px; background: var(--msg-other); border-radius: 15px; display: flex; flex-direction: column; gap: 10px; align-items: center; }
-        #my-avatar { width: 60px; height: 60px; border-radius: 50%; }
-        .nickname-input { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px; text-align: center; }
+        #my-avatar { width: 50px; height: 50px; border-radius: 50%; object-fit: cover; }
+        .nickname-input { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px; text-align: center; outline: none; }
 
-        .user-item { display: flex; align-items: center; gap: 10px; padding: 10px; cursor: pointer; border-radius: 10px; }
+        .user-item { display: flex; align-items: center; gap: 10px; padding: 12px; cursor: pointer; border-radius: 10px; }
         .user-item:active { background: var(--msg-other); }
         .user-img { width: 35px; height: 35px; border-radius: 50%; object-fit: cover; }
 
         #chat-ui { display: none; flex-direction: column; height: 100dvh; width: 100vw; }
-        header { height: 60px; display: flex; align-items: center; padding: 0 15px; border-bottom: 1px solid var(--border); background: var(--header); gap: 15px; }
-        #box { flex-grow: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px; }
+        header { height: 65px; display: flex; align-items: center; padding: 0 15px; border-bottom: 1px solid var(--border); background: var(--header); gap: 15px; }
         
+        #box { flex-grow: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px; }
         .msg { max-width: 80%; padding: 10px 14px; border-radius: 18px; position: relative; }
         .me { align-self: flex-end; background: var(--msg-me); color: #fff; border-bottom-right-radius: 4px; }
         .others { align-self: flex-start; background: var(--msg-other); color: var(--text); border-bottom-left-radius: 4px; }
-        .msg-info { font-size: 9px; opacity: 0.6; margin-top: 4px; text-align: right; }
+        .msg-info { font-size: 9px; opacity: 0.5; margin-top: 4px; text-align: right; }
 
-        .input-area { padding: 10px 15px 30px; border-top: 1px solid var(--border); display: flex; gap: 10px; background: var(--bg); }
+        .input-area { padding: 10px 15px 35px; border-top: 1px solid var(--border); display: flex; gap: 10px; background: var(--bg); }
         input[type="text"] { flex-grow: 1; padding: 12px 16px; border-radius: 20px; border: none; background: var(--msg-other); color: var(--text); font-size: 16px; outline: none; }
         
         .btn { background: none; border: none; color: var(--accent); font-weight: 600; cursor: pointer; }
-        #auth-ui { height: 100dvh; display: flex; justify-content: center; align-items: center; }
+        #auth-ui { height: 100dvh; display: flex; justify-content: center; align-items: center; flex-direction: column; gap: 20px; }
     </style>
 </head>
 <body>
     <div id="overlay" onclick="toggleMenu()"></div>
     <div id="sidebar">
         <div class="profile-section">
-            <img id="my-avatar" src="" alt="Profil">
+            <img id="my-avatar" src="" alt="">
             <input type="text" id="profile-name-input" class="nickname-input" placeholder="Tvoje přezdívka">
-            <button class="btn" onclick="updateNickname()" style="font-size: 12px;">Uložit jméno</button>
+            <button class="btn" onclick="updateNickname()" style="font-size: 12px;">Uložit přezdívku</button>
         </div>
         
         <div style="flex-grow: 1; overflow-y: auto;">
-            <h3 style="font-size: 14px; opacity: 0.5; margin-bottom: 10px;">KONTAKTY</h3>
+            <p style="font-size: 11px; opacity: 0.5; margin-bottom: 10px; letter-spacing: 1px;">KONTAKTY</p>
             <div id="user-list"></div>
         </div>
 
-        <div style="border-top: 1px solid var(--border); padding-top: 15px; display: flex; flex-direction: column; gap: 10px;">
-            <button class="btn" style="text-align:left" onclick="toggleTheme()">Změnit vzhled</button>
-            <button class="btn" style="text-align:left; color:red" onclick="logout()">Odhlásit se</button>
+        <div style="border-top: 1px solid var(--border); padding-top: 15px; display: flex; flex-direction: column; gap: 12px;">
+            <button class="btn" style="text-align:left" onclick="toggleTheme()">Vzhled</button>
+            <button class="btn" style="text-align:left; color:#ff3b30" onclick="logout()">Odhlásit se</button>
         </div>
     </div>
 
     <div id="auth-ui">
-        <button class="btn" style="font-size:20px; border: 1px solid var(--accent); padding: 15px 30px; border-radius: 30px;" onclick="login()">Vstoupit do Luvyx</button>
+        <h1 style="margin-bottom: 10px;">Luvyx Chat</h1>
+        <button class="btn" style="font-size:18px; border: 1.5px solid var(--accent); padding: 12px 25px; border-radius: 30px;" onclick="login()">Vstoupit</button>
     </div>
 
     <div id="chat-ui">
         <header>
-            <button class="btn" style="font-size:20px" onclick="toggleMenu()">☰</button>
-            <span id="chat-title" style="font-weight: bold;">Vyberte kontakt</span>
+            <button class="btn" style="font-size:22px" onclick="toggleMenu()">☰</button>
+            <div style="display: flex; flex-direction: column;">
+                <span style="font-weight: 800; font-size: 18px;">Luvyx Chat</span>
+                <span id="chat-subtitle" style="font-size: 11px; opacity: 0.6;">Vyberte kontakt v menu</span>
+            </div>
         </header>
         <div id="box"></div>
         <div class="input-area">
