@@ -7,7 +7,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, doc, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-        import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import { getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyAW9wTUspeZIfVDOrmE11GHsWWZACdaghc",
@@ -42,6 +42,9 @@
                         document.getElementById('profile-name-input').value = data.name || user.displayName;
                         document.getElementById('my-avatar').src = data.photo || user.photoURL;
                         document.getElementById('premium-status').innerText = isPremium ? "👑 Premium Aktivní" : "Zadejte kód pro Premium";
+                        
+                        // Premium funkce: Speciální pozadí
+                        if (isPremium) document.body.classList.add('premium-mode');
                     } else {
                         setDoc(userRef, { name: user.displayName, photo: user.photoURL, uid: user.uid, premium: false }, { merge: true });
                     }
@@ -54,6 +57,9 @@
                 document.getElementById('box').innerHTML = ""; 
             }
         });
+
+        // Zachycení výsledku přesměrování (pro mobilní app)
+        getRedirectResult(auth).catch((error) => console.error(error));
 
         window.checkPremium = async () => {
             const code = document.getElementById('premium-code').value.trim();
@@ -76,11 +82,14 @@
                     const u = d.data();
                     if(u.uid === currentUser?.uid) return;
                     const div = document.createElement('div');
-                    div.className = 'user-item';
+                    div.className = 'user-circle-item';
                     div.onclick = () => startChat(u);
                     div.innerHTML = `
-                        <img src="${u.photo || ''}" class="user-img ${u.premium ? 'premium-border' : ''}">
-                        <span>${u.name} ${u.premium ? '👑' : ''}</span>
+                        <div class="avatar-wrapper ${u.premium ? 'premium-ring' : ''}">
+                            <img src="${u.photo || ''}" alt="">
+                            ${u.premium ? '<span class="crown-icon">👑</span>' : ''}
+                        </div>
+                        <span class="user-circle-name">${u.name.split(' ')[0]}</span>
                     `;
                     list.appendChild(div);
                 });
@@ -98,16 +107,25 @@
         window.startChat = (targetUser) => {
             activeChatId = getChatId(currentUser.uid, targetUser.uid);
             document.getElementById('chat-subtitle').innerText = "Chat s: " + targetUser.name;
-            toggleMenu();
+            if(document.getElementById('sidebar').classList.contains('open')) toggleMenu();
             loadMessages(activeChatId);
         };
 
         window.sendMsg = async () => {
             const input = document.getElementById('msgInput');
-            if (currentUser && activeChatId && input.value.trim() !== "") {
+            const text = input.value.trim();
+            
+            // Omezení pro ne-premium (příklad funkce)
+            if (!isPremium && text.length > 100) {
+                alert("Zpráva je příliš dlouhá. Premium uživatelé nemají limity!");
+                return;
+            }
+
+            if (currentUser && activeChatId && text !== "") {
                 await addDoc(collection(db, "chats", activeChatId, "messages"), {
-                    text: input.value,
+                    text: text,
                     sender: currentUser.uid,
+                    senderName: document.getElementById('profile-name-input').value || currentUser.displayName,
                     premium: isPremium,
                     time: serverTimestamp()
                 });
@@ -126,8 +144,13 @@
                     const m = d.data();
                     const isMe = m.sender === currentUser?.uid;
                     const time = m.time ? new Date(m.time.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "";
+                    
+                    // Premium: Zlaté jméno u odesílatele
+                    const nameStyle = m.premium ? 'color: #d4af37; font-weight: bold;' : 'opacity: 0.6;';
+
                     box.innerHTML += `
                         <div class="msg ${isMe ? 'me' : 'others'} ${m.premium ? 'premium-msg' : ''}">
+                            <div class="msg-sender" style="${nameStyle} font-size: 10px; margin-bottom: 3px;">${m.senderName || 'Uživatel'}</div>
                             <div class="msg-text">${m.text}</div>
                             <div class="msg-info">${time} ${m.premium ? '👑' : ''}</div>
                         </div>`;
@@ -147,45 +170,69 @@
         };
 
         window.toggleTheme = () => document.body.classList.toggle('dark');
-        window.login = () => signInWithPopup(auth, new GoogleAuthProvider());
+        window.login = () => signInWithRedirect(auth, new GoogleAuthProvider());
     </script>
     <style>
         :root { --bg: #ffffff; --header: #ffffff; --text: #000; --accent: #007aff; --msg-me: #007aff; --msg-other: #f2f2f7; --border: #e5e5ea; --sidebar: #f9f9f9; --gold: #d4af37; }
         body.dark { --bg: #000; --header: #121212; --text: #fff; --accent: #0a84ff; --msg-me: #0a84ff; --msg-other: #1c1c1e; --border: #333; --sidebar: #121212; }
 
+        /* Premium animace pozadí */
+        body.premium-mode #chat-ui {
+            background: linear-gradient(-45deg, #f0f2f5, #fff9e6, #f0f2f5);
+            background-size: 400% 400%;
+            animation: gradient 15s ease infinite;
+        }
+        body.dark.premium-mode #chat-ui {
+            background: linear-gradient(-45deg, #000, #1a1600, #000);
+            background-size: 400% 400%;
+            animation: gradient 15s ease infinite;
+        }
+        @keyframes gradient { 0% {background-position: 0% 50%;} 50% {background-position: 100% 50%;} 100% {background-position: 0% 50%;} }
+
         * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
         body, html { width: 100%; height: 100%; font-family: -apple-system, sans-serif; background: var(--bg); color: var(--text); overflow: hidden; }
 
-        #sidebar { position: fixed; left: -280px; top: 0; width: 280px; height: 100dvh; background: var(--sidebar); z-index: 1000; transition: 0.3s ease; border-right: 1px solid var(--border); padding: 20px; display: flex; flex-direction: column; gap: 15px; }
+        #sidebar { position: fixed; left: -280px; top: 0; width: 280px; height: 100dvh; background: var(--sidebar); z-index: 1000; transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1); border-right: 1px solid var(--border); padding: 20px; display: flex; flex-direction: column; gap: 15px; }
         #sidebar.open { left: 0; }
-        #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); z-index: 999; display: none; }
+        #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); z-index: 999; display: none; backdrop-filter: blur(2px); }
         #overlay.visible { display: block; }
 
-        .profile-section { padding: 15px; background: var(--msg-other); border-radius: 15px; display: flex; flex-direction: column; gap: 8px; align-items: center; }
-        #my-avatar { width: 45px; height: 45px; border-radius: 50%; object-fit: cover; }
-        .nickname-input { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 13px; text-align: center; outline: none; }
+        /* NOVÝ DESIGN KONTAKTŮ - KRUHY */
+        #user-list { display: flex; gap: 15px; overflow-x: auto; padding: 10px 5px; scrollbar-width: none; }
+        #user-list::-webkit-scrollbar { display: none; }
+        .user-circle-item { display: flex; flex-direction: column; align-items: center; min-width: 65px; cursor: pointer; transition: transform 0.2s; }
+        .user-circle-item:active { transform: scale(0.9); }
+        .avatar-wrapper { width: 55px; height: 55px; border-radius: 50%; padding: 3px; background: var(--border); position: relative; }
+        .avatar-wrapper img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; background: #eee; }
+        .premium-ring { background: linear-gradient(45deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888); }
+        .user-circle-name { font-size: 11px; margin-top: 5px; font-weight: 500; width: 100%; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .crown-icon { position: absolute; top: -5px; right: -5px; font-size: 14px; }
 
-        .premium-box { padding: 12px; background: linear-gradient(135deg, #fff9e6, #fff); border: 1px solid var(--gold); border-radius: 12px; color: #000; font-size: 12px; }
+        .profile-section { padding: 15px; background: var(--msg-other); border-radius: 20px; display: flex; flex-direction: column; gap: 8px; align-items: center; }
+        #my-avatar { width: 60px; height: 60px; border-radius: 50%; object-fit: cover; border: 2px solid var(--accent); }
+        .nickname-input { width: 100%; padding: 10px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px; text-align: center; outline: none; }
+
+        .premium-box { padding: 12px; background: linear-gradient(135deg, #fff9e6, #fff); border: 1px solid var(--gold); border-radius: 15px; color: #000; font-size: 12px; box-shadow: 0 4px 10px rgba(212, 175, 55, 0.1); }
         body.dark .premium-box { background: linear-gradient(135deg, #1a1600, #121212); color: #fff; }
 
-        .user-item { display: flex; align-items: center; gap: 10px; padding: 10px; cursor: pointer; border-radius: 10px; }
-        .premium-border { border: 2px solid var(--gold) !important; }
-
-        #chat-ui { display: none; flex-direction: column; height: 100dvh; width: 100vw; }
-        header { height: 65px; display: flex; align-items: center; padding: 0 15px; border-bottom: 1px solid var(--border); background: var(--header); gap: 15px; }
+        #chat-ui { display: none; flex-direction: column; height: 100dvh; width: 100vw; position: relative; z-index: 1; }
+        header { height: 70px; display: flex; align-items: center; padding: 0 20px; border-bottom: 1px solid var(--border); background: var(--header); gap: 15px; }
         
-        #box { flex-grow: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px; }
-        .msg { max-width: 80%; padding: 10px 14px; border-radius: 18px; position: relative; border: 2px solid transparent; }
+        #box { flex-grow: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 8px; }
+        .msg { max-width: 75%; padding: 10px 14px; border-radius: 20px; position: relative; font-size: 15px; line-height: 1.4; }
         .me { align-self: flex-end; background: var(--msg-me); color: #fff; border-bottom-right-radius: 4px; }
         .others { align-self: flex-start; background: var(--msg-other); color: var(--text); border-bottom-left-radius: 4px; }
-        .premium-msg { border-color: var(--gold); }
-        .msg-info { font-size: 9px; opacity: 0.5; margin-top: 4px; text-align: right; }
+        .premium-msg { border: 1.5px solid var(--gold); box-shadow: 0 2px 8px rgba(212, 175, 55, 0.2); }
+        .msg-info { font-size: 10px; opacity: 0.6; margin-top: 4px; text-align: right; }
 
-        .input-area { padding: 10px 15px 35px; border-top: 1px solid var(--border); display: flex; gap: 10px; background: var(--bg); }
-        input[type="text"] { flex-grow: 1; padding: 12px 16px; border-radius: 20px; border: none; background: var(--msg-other); color: var(--text); font-size: 16px; outline: none; }
+        .input-area { padding: 15px 15px 40px; border-top: 1px solid var(--border); display: flex; gap: 10px; background: var(--bg); }
+        input[type="text"] { flex-grow: 1; padding: 12px 18px; border-radius: 25px; border: none; background: var(--msg-other); color: var(--text); font-size: 16px; outline: none; transition: 0.2s; }
+        input[type="text"]:focus { background: var(--border); }
         
-        .btn { background: none; border: none; color: var(--accent); font-weight: 600; cursor: pointer; }
-        #auth-ui { height: 100dvh; display: flex; justify-content: center; align-items: center; flex-direction: column; }
+        .btn { background: none; border: none; color: var(--accent); font-weight: 600; cursor: pointer; transition: opacity 0.2s; }
+        .btn:active { opacity: 0.5; }
+        #auth-ui { height: 100dvh; display: flex; justify-content: center; align-items: center; flex-direction: column; background: #fff; }
+        body.dark #auth-ui { background: #000; }
     </style>
 </head>
 <body>
@@ -194,7 +241,7 @@
         <div class="profile-section">
             <img id="my-avatar" src="" alt="">
             <input type="text" id="profile-name-input" class="nickname-input" placeholder="Tvoje přezdívka">
-            <button class="btn" onclick="updateNickname()" style="font-size: 11px;">Uložit přezdívku</button>
+            <button class="btn" onclick="updateNickname()" style="font-size: 12px; margin-top: 5px;">Uložit přezdívku</button>
         </div>
 
         <div class="premium-box">
@@ -205,34 +252,35 @@
             </div>
         </div>
         
-        <div style="flex-grow: 1; overflow-y: auto;">
-            <p style="font-size: 11px; opacity: 0.5; margin-bottom: 5px;">KONTAKTY</p>
-            <div id="user-list"></div>
+        <div style="flex-grow: 1; overflow-y: hidden; display: flex; flex-direction: column;">
+            <p style="font-size: 11px; opacity: 0.5; margin-bottom: 5px; font-weight: 700;">KONTAKTY</p>
+            <div id="user-list">
+                </div>
         </div>
 
-        <div style="border-top: 1px solid var(--border); padding-top: 10px; display: flex; flex-direction: column; gap: 10px;">
-            <button class="btn" style="text-align:left" onclick="toggleTheme()">Vzhled</button>
-            <button class="btn" style="text-align:left; color:#ff3b30" onclick="logout()">Odhlásit se</button>
+        <div style="border-top: 1px solid var(--border); padding-top: 15px; display: flex; flex-direction: column; gap: 12px;">
+            <button class="btn" style="text-align:left; font-size: 15px;" onclick="toggleTheme()">🌓 Změnit vzhled</button>
+            <button class="btn" style="text-align:left; color:#ff3b30; font-size: 15px;" onclick="logout()">🚪 Odhlásit se</button>
         </div>
     </div>
 
     <div id="auth-ui">
-        <h1>Luvyx Chat</h1>
-        <button class="btn" style="font-size:18px; border: 1.5px solid var(--accent); padding: 12px 25px; border-radius: 30px;" onclick="login()">Vstoupit</button>
+        <h1 style="font-size: 40px; margin-bottom: 20px; font-weight: 900; letter-spacing: -1px;">Luvyx</h1>
+        <button class="btn" style="font-size:18px; background: var(--accent); color: white; padding: 15px 40px; border-radius: 30px; box-shadow: 0 10px 20px rgba(0,122,255,0.3);" onclick="login()">Vstoupit do chatu</button>
     </div>
 
     <div id="chat-ui">
         <header>
-            <button class="btn" style="font-size:22px" onclick="toggleMenu()">☰</button>
+            <button class="btn" style="font-size:26px" onclick="toggleMenu()">☰</button>
             <div style="display: flex; flex-direction: column;">
-                <span style="font-weight: 800; font-size: 18px;">Luvyx Chat</span>
-                <span id="chat-subtitle" style="font-size: 11px; opacity: 0.6;">Vyberte kontakt</span>
+                <span style="font-weight: 800; font-size: 20px;">Luvyx</span>
+                <span id="chat-subtitle" style="font-size: 12px; opacity: 0.6;">Vyberte si někoho</span>
             </div>
         </header>
         <div id="box"></div>
         <div class="input-area">
-            <input type="text" id="msgInput" placeholder="Napište zprávu..." onkeypress="if(event.key==='Enter') sendMsg()">
-            <button class="btn" onclick="sendMsg()">Odeslat</button>
+            <input type="text" id="msgInput" placeholder="Zpráva Luvyx" onkeypress="if(event.key==='Enter') sendMsg()">
+            <button class="btn" style="font-size: 18px;" onclick="sendMsg()">➤</button>
         </div>
     </div>
 </body>
