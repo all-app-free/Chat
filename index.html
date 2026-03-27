@@ -7,7 +7,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, doc, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-        import { getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyAW9wTUspeZIfVDOrmE11GHsWWZACdaghc",
@@ -43,7 +43,6 @@
                         document.getElementById('my-avatar').src = data.photo || user.photoURL;
                         document.getElementById('premium-status').innerText = isPremium ? "👑 Premium Aktivní" : "Zadejte kód pro Premium";
                         
-                        // Premium funkce: Speciální pozadí
                         if (isPremium) document.body.classList.add('premium-mode');
                     } else {
                         setDoc(userRef, { name: user.displayName, photo: user.photoURL, uid: user.uid, premium: false }, { merge: true });
@@ -58,8 +57,7 @@
             }
         });
 
-        // Zachycení výsledku přesměrování (pro mobilní app)
-        getRedirectResult(auth).catch((error) => console.error(error));
+        window.login = () => signInWithPopup(auth, new GoogleAuthProvider());
 
         window.checkPremium = async () => {
             const code = document.getElementById('premium-code').value.trim();
@@ -115,7 +113,6 @@
             const input = document.getElementById('msgInput');
             const text = input.value.trim();
             
-            // Omezení pro ne-premium (příklad funkce)
             if (!isPremium && text.length > 100) {
                 alert("Zpráva je příliš dlouhá. Premium uživatelé nemají limity!");
                 return;
@@ -144,8 +141,6 @@
                     const m = d.data();
                     const isMe = m.sender === currentUser?.uid;
                     const time = m.time ? new Date(m.time.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "";
-                    
-                    // Premium: Zlaté jméno u odesílatele
                     const nameStyle = m.premium ? 'color: #d4af37; font-weight: bold;' : 'opacity: 0.6;';
 
                     box.innerHTML += `
@@ -170,13 +165,11 @@
         };
 
         window.toggleTheme = () => document.body.classList.toggle('dark');
-        window.login = () => signInWithRedirect(auth, new GoogleAuthProvider());
     </script>
     <style>
         :root { --bg: #ffffff; --header: #ffffff; --text: #000; --accent: #007aff; --msg-me: #007aff; --msg-other: #f2f2f7; --border: #e5e5ea; --sidebar: #f9f9f9; --gold: #d4af37; }
         body.dark { --bg: #000; --header: #121212; --text: #fff; --accent: #0a84ff; --msg-me: #0a84ff; --msg-other: #1c1c1e; --border: #333; --sidebar: #121212; }
 
-        /* Premium animace pozadí */
         body.premium-mode #chat-ui {
             background: linear-gradient(-45deg, #f0f2f5, #fff9e6, #f0f2f5);
             background-size: 400% 400%;
@@ -197,7 +190,6 @@
         #overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); z-index: 999; display: none; backdrop-filter: blur(2px); }
         #overlay.visible { display: block; }
 
-        /* NOVÝ DESIGN KONTAKTŮ - KRUHY */
         #user-list { display: flex; gap: 15px; overflow-x: auto; padding: 10px 5px; scrollbar-width: none; }
         #user-list::-webkit-scrollbar { display: none; }
         .user-circle-item { display: flex; flex-direction: column; align-items: center; min-width: 65px; cursor: pointer; transition: transform 0.2s; }
@@ -254,8 +246,7 @@
         
         <div style="flex-grow: 1; overflow-y: hidden; display: flex; flex-direction: column;">
             <p style="font-size: 11px; opacity: 0.5; margin-bottom: 5px; font-weight: 700;">KONTAKTY</p>
-            <div id="user-list">
-                </div>
+            <div id="user-list"></div>
         </div>
 
         <div style="border-top: 1px solid var(--border); padding-top: 15px; display: flex; flex-direction: column; gap: 12px;">
@@ -279,7 +270,7 @@
         </header>
         <div id="box"></div>
         <div class="input-area">
-            <input type="text" id="msgInput" placeholder="Zpráva Luvyx" onkeypress="if(event.key==='Enter') sendMsg()">
+            <input type="text" id="msgInput" placeholder="Napište něco..." onkeypress="if(event.key==='Enter') sendMsg()">
             <button class="btn" style="font-size: 18px;" onclick="sendMsg()">➤</button>
         </div>
     </div>
